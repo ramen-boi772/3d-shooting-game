@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D Third-Person Shooter</title>
+    <style>
+        body { margin: 0; overflow: hidden; cursor: none; }
+        canvas { display: block; }
+        .game-info {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            color: white;
+            font-size: 24px;
+            font-weight: bold;
+        }
+        #gameOver {
+            color: red;
+            font-size: 30px;
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            display: none;
+        }
+    </style>
+</head>
+<body>
+
+<div class="game-info">
+    <p>Score: <span id="score">0</span></p>
+    <p>Time: <span id="timer">60</span>s</p>
+</div>
+<div id="gameOver">Game Over!</div>
+
+<!-- Load Three.js -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+
+<script>
+    // Set up the scene, camera, and renderer
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+    const renderer = new THREE.WebGLRenderer();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    document.body.appendChild(renderer.domElement);
+
+    // Add a light source
+    const light = new THREE.PointLight(0xFFFFFF, 1, 100);
+    light.position.set(0, 5, 5);
+    scene.add(light);
+
+    // Create a simple cube to represent the player
+    const geometry = new THREE.BoxGeometry(1, 1, 1);
+    const material = new THREE.MeshBasicMaterial({ color: 0x00ff00 });
+    const player = new THREE.Mesh(geometry, material);
+    scene.add(player);
+
+    // Set the camera position so that it can view the player
+    camera.position.z = 5;
+
+    // Mouse variables for controlling the camera view
+    let mouseX = 0;
+    let mouseY = 0;
+    let prevMouseX = 0;
+    let prevMouseY = 0;
+
+    let isLocked = false;
+
+    // Pointer lock mouse events
+    function onPointerLockChange() {
+        if (document.pointerLockElement === renderer.domElement) {
+            isLocked = true;
+            document.body.style.cursor = 'none';  // Hide the cursor when it's locked
+        } else {
+            isLocked = false;
+            document.body.style.cursor = 'auto';  // Show the cursor when it's unlocked
+        }
+    }
+
+    function onPointerLockError() {
+        console.error('Pointer lock failed');
+    }
+
+    // Lock the pointer when mouse is clicked
+    window.addEventListener('click', () => {
+        if (!isLocked) {
+            renderer.domElement.requestPointerLock();
+        }
+    });
+
+    document.addEventListener('pointerlockchange', onPointerLockChange, false);
+    document.addEventListener('pointerlockerror', onPointerLockError, false);
+
+    // Camera movement control based on mouse
+    function updateCamera() {
+        if (isLocked) {
+            const deltaX = mouseX - prevMouseX;
+            const deltaY = mouseY - prevMouseY;
+
+            // Update previous mouse positions
+            prevMouseX = mouseX;
+            prevMouseY = mouseY;
+
+            // Move the camera horizontally (yaw)
+            camera.rotation.y -= deltaX * 0.002;
+
+            // Move the camera vertically (pitch)
+            camera.rotation.x -= deltaY * 0.002;
+
+            // Clamp the vertical movement so the camera doesn't flip upside down
+            camera.rotation.x = Math.max(Math.min(camera.rotation.x, Math.PI / 2), -Math.PI / 2);
+        }
+    }
+
+    window.addEventListener('mousemove', (event) => {
+        if (isLocked) {
+            mouseX = event.movementX;
+            mouseY = event.movementY;
+        }
+    });
+
+    // Handle player movement with WASD
+    let playerSpeed = 0.1;
+    window.addEventListener('keydown', (event) => {
+        if (event.key === 'w') player.position.z -= playerSpeed;
+        if (event.key === 's') player.position.z += playerSpeed;
+        if (event.key === 'a') player.position.x -= playerSpeed;
+        if (event.key === 'd') player.position.x += playerSpeed;
+    });
+
+    // Bullet creation
+    class Bullet {
+        constructor(x, y, z) {
+            const geometry = new THREE.BoxGeometry(0.2, 0.2, 0.5);
+            const material = new THREE.MeshBasicMaterial({ color: 0xffffff });
+            this.mesh = new THREE.Mesh(geometry, material);
+            this.mesh.position.set(x, y, z);
+            scene.add(this.mesh);
+        }
+
+        move() {
+            this.mesh.position.z -= 0.5; // Move bullet forward
+        }
+
+        offScreen() {
+            return this.mesh.position.z < -10; // Off-screen if too far away
+        }
+
+        checkHit(target) {
+            // Simple collision detection with distance
+            const distance = this.mesh.position.distanceTo(target.mesh.position);
+            return distance < 1; // Hit if within distance
+        }
+    }
+
+    // Target creation
+    class Target {
+        constructor() {
+            const geometry = new THREE.BoxGeometry(1, 1, 1);
+            const material = new THREE.MeshBasicMaterial({ color: 0xff0000 });
+            this.mesh = new THREE.Mesh(geometry, material);
+            this.mesh.position.set(Math.random() * 6 - 3, 1, Math.random() * 6 - 3); // Random position
+            scene.add(this.mesh);
+        }
+
+        move() {
+            this.mesh.position.y -= 0.05; // Drop the target down
+        }
+
+        offScreen() {
+            return this.mesh.position.y < -5; // Remove if off-screen
+        }
+    }
+
+    // Spawn targets periodically
+    let targets = [];
+    setInterval(() => {
+        if (!gameOver) {
+            const target = new Target();
+            targets.push(target);
+        }
+    }, 2000);
+
+    // Timer countdown
+    let timeLeft = 60;
+    let timerInterval;
+    let gameOver = false;
+
+    function startTimer() {
+        timerInterval = setInterval(() => {
+            if (timeLeft > 0 && !gameOver) {
+                timeLeft--;
+                document.getElementById('timer').textContent = timeLeft;
+            } else if (timeLeft <= 0 && !gameOver) {
+                endGame();
+            }
+        }, 1000);
+    }
+
+    function endGame() {
+        gameOver = true;
+        document.getElementById('gameOver').style.display = 'block'; // Show game over message
+        clearInterval(timerInterval); // Stop timer
+    }
+
+    // Game loop
+    let bullets = [];
+    let score = 0;
+
+    window.addEventListener('click', () => {
+        if (gameOver) return;
+
+        const bullet = new Bullet(player.position.x, player.position.y, player.position.z);
+        bullets.push(bullet); // Add bullet to list
+    });
+
+    function gameLoop() {
+        if (gameOver) return;
+
+        // Update targets
+        targets.forEach((target, index) => {
+            target.move();
+            if (target.offScreen()) {
+                scene.remove(target.mesh);
+                targets.splice(index, 1);
+            }
+        });
+
+        // Update bullets
+        bullets.forEach((bullet, index) => {
+            bullet.move();
+            if (bullet.offScreen()) {
+                scene.remove(bullet.mesh);
+                bullets.splice(index, 1);
+            }
+
+            // Check for collision with targets
+            targets.forEach((target, targetIndex) => {
+                if (bullet.checkHit(target)) {
+                    scene.remove(target.mesh);
+                    scene.remove(bullet.mesh);
+                    targets.splice(targetIndex, 1);
+                    bullets.splice(index, 1);
+                    score++;
+                    document.getElementById('score').textContent = score;
+                }
+            });
+        });
+
+        // Update camera position
+        updateCamera();
+
+        // Render the scene
+        renderer.render(scene, camera);
+        requestAnimationFrame(gameLoop);
+    }
+
+    // Start game
+    startTimer();
+    gameLoop();
+
+    // Resize handling
+    window.addEventListener('resize', () => {
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+    });
+</script>
+
+</body>
+</html>
